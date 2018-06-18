@@ -3,25 +3,18 @@ package sup
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
-	"net/url"
 	"os"
 	"os/user"
-	"path/filepath"
-	"strings"
-	"sync"
 
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/agent"
 )
 
 // Client is a wrapper over the SSH connection/sessions.
 type SSHClient struct {
 	conn         *ssh.Client
 	sess         *ssh.Session
-	user         string
-	host         string
+	host         *Host
 	remoteStdin  io.WriteCloser
 	remoteStdout io.Reader
 	remoteStderr io.Reader
@@ -43,76 +36,29 @@ func (e ErrConnect) Error() string {
 }
 
 // parseHost parses and normalizes <user>@<host:port> from a given string.
-func (c *SSHClient) parseHost(host string) error {
-	// https://golang.org/pkg/net/url/#URL
-	// [scheme:][//[userinfo@]host][/]path[?query][#fragment]
-	if !strings.Contains(host, "://") && !strings.HasPrefix(host, "//") {
-		host = "ssh://" + host
-	}
-
-	hostURL, err := url.Parse(host)
-	if err != nil {
-		return err
+func (c *SSHClient) Init() error {
+	// Add default hostname, if not set
+	if c.host.Hostname == "" {
+		c.host.Hostname = c.host.Name
 	}
 
 	// Add default port, if not set
-	hostname := hostURL.Hostname()
-	port := hostURL.Port()
-	if port == "" {
-		port = "22"
-	}
-	c.host = net.JoinHostPort(hostname, port)
-
-	if u := hostURL.User.Username(); u != "" {
-		c.user = u
+	if c.host.Port == "" {
+		c.host.Port = "22"
 	}
 
 	// Add default user, if not set
-	if c.user == "" {
+	if c.host.User == "" {
 		u, err := user.Current()
 		if err != nil {
 			return err
 		}
-		c.user = u.Username
+		c.host.User = u.Username
 	}
 
-	c.env = c.env + `export SUP_HOST="` + c.host + `";`
+	c.env = c.env + c.host.Env.AsExport() + `export SUP_HOST="` + c.host.Hostname + `";`
 
 	return nil
-}
-
-var initAuthMethodOnce sync.Once
-var authMethod ssh.AuthMethod
-
-// initAuthMethod initiates SSH authentication method.
-func initAuthMethod() {
-	var signers []ssh.Signer
-
-	// If there's a running SSH Agent, try to use its Private keys.
-	sock, err := net.Dial("unix", os.Getenv("SSH_AUTH_SOCK"))
-	if err == nil {
-		agent := agent.NewClient(sock)
-		signers, _ = agent.Signers()
-	}
-
-	// Try to read user's SSH private keys form the standard paths.
-	files, _ := filepath.Glob(os.Getenv("HOME") + "/.ssh/id_*")
-	for _, file := range files {
-		if strings.HasSuffix(file, ".pub") {
-			continue // Skip public keys.
-		}
-		data, err := ioutil.ReadFile(file)
-		if err != nil {
-			continue
-		}
-		signer, err := ssh.ParsePrivateKey(data)
-		if err != nil {
-			continue
-		}
-		signers = append(signers, signer)
-
-	}
-	authMethod = ssh.PublicKeys(signers...)
 }
 
 // SSHDialFunc can dial an ssh server and return a client
@@ -120,35 +66,40 @@ type SSHDialFunc func(net, addr string, config *ssh.ClientConfig) (*ssh.Client, 
 
 // Connect creates SSH connection to a specified host.
 // It expects the host of the form "[ssh://]host[:port]".
-func (c *SSHClient) Connect(host string) error {
-	return c.ConnectWith(host, ssh.Dial)
+func (c *SSHClient) Connect() error {
+	return c.ConnectWith(ssh.Dial)
 }
 
 // ConnectWith creates a SSH connection to a specified host. It will use dialer to establish the
 // connection.
 // TODO: Split Signers to its own method.
-func (c *SSHClient) ConnectWith(host string, dialer SSHDialFunc) error {
+func (c *SSHClient) ConnectWith(dialer SSHDialFunc) error {
 	if c.connOpened {
 		return fmt.Errorf("Already connected")
 	}
 
-	initAuthMethodOnce.Do(initAuthMethod)
-
-	err := c.parseHost(host)
+	err := c.Init()
 	if err != nil {
 		return err
 	}
 
+	if c.host.IdentityFile != "" {
+		err := addPublicKeySigner(c.host.IdentityFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", err)
+		}
+	}
+
 	config := &ssh.ClientConfig{
-		User: c.user,
+		User: c.host.User,
 		Auth: []ssh.AuthMethod{
-			authMethod,
+			ssh.PublicKeys(publicKeysSigners...),
 		},
 	}
 
-	c.conn, err = dialer("tcp", c.host, config)
+	c.conn, err = dialer("tcp", net.JoinHostPort(c.host.Hostname, c.host.Port), config)
 	if err != nil {
-		return ErrConnect{c.user, c.host, err.Error()}
+		return ErrConnect{c.host.User, c.host.Name, err.Error()}
 	}
 	c.connOpened = true
 
@@ -267,7 +218,7 @@ func (c *SSHClient) Stdout() io.Reader {
 }
 
 func (c *SSHClient) Prefix() (string, int) {
-	host := c.user + "@" + c.host + " | "
+	host := c.host.User + "@" + c.host.Name + " | "
 	return c.color + host + ResetColor, len(host)
 }
 

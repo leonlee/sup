@@ -3,14 +3,19 @@ package sup
 import (
 	"fmt"
 	"io"
+	"io/ioutil"
+	"net"
 	"os"
 	"os/signal"
+	"os/user"
+	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/goware/prefixer"
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 const VERSION = "0.5"
@@ -27,6 +32,36 @@ func New(conf *Supfile) (*Stackup, error) {
 	}, nil
 }
 
+func ResolvePath(path string) string {
+	if path == "" {
+		return ""
+	}
+	if path[:2] == "~/" {
+		usr, err := user.Current()
+		if err == nil {
+			path = filepath.Join(usr.HomeDir, path[2:])
+		}
+	}
+	return path
+}
+
+var publicKeysSigners []ssh.Signer
+
+// addPublicKeySigner add SSH Public Key Signer.
+func addPublicKeySigner(file string) error {
+	data, err := ioutil.ReadFile(ResolvePath(file))
+	if err != nil {
+		return err
+	}
+
+	signer, err := ssh.ParsePrivateKey(data)
+	if err != nil {
+		return err
+	}
+	publicKeysSigners = append(publicKeysSigners, signer)
+	return nil
+}
+
 // Run runs set of commands on multiple hosts defined by network sequentially.
 // TODO: This megamoth method needs a big refactor and should be split
 //       to multiple smaller methods.
@@ -37,11 +72,36 @@ func (sup *Stackup) Run(network *Network, envVars EnvList, commands ...*Command)
 
 	env := envVars.AsExport()
 
+	// If there's a running SSH Agent, try to use its Private keys.
+	sock, err := net.Dial("unix", os.Getenv("SSH_AUTH_SOCK"))
+	if err == nil {
+		agent := agent.NewClient(sock)
+		publicKeysSigners, _ = agent.Signers()
+	}
+
+	if network.IdentityFile != "" {
+		err := addPublicKeySigner(network.IdentityFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", err)
+		}
+	} else {
+		// Try to read user's SSH private keys form the standard paths.
+		files, _ := filepath.Glob(os.Getenv("HOME") + "/.ssh/id_*")
+		for _, f := range files {
+			if strings.HasSuffix(f, ".pub") {
+				continue // Skip public keys.
+			}
+			addPublicKeySigner(f)
+		}
+	}
+
 	// Create clients for every host (either SSH or Localhost).
 	var bastion *SSHClient
-	if network.Bastion != "" {
-		bastion = &SSHClient{}
-		if err := bastion.Connect(network.Bastion); err != nil {
+	if network.Bastion != nil {
+		bastion = &SSHClient{
+			host: network.Bastion,
+		}
+		if err := bastion.Connect(); err != nil {
 			return errors.Wrap(err, "connecting to bastion failed")
 		}
 	}
@@ -52,15 +112,15 @@ func (sup *Stackup) Run(network *Network, envVars EnvList, commands ...*Command)
 
 	for i, host := range network.Hosts {
 		wg.Add(1)
-		go func(i int, host string) {
+		go func(i int, host *Host) {
 			defer wg.Done()
 
 			// Localhost client.
-			if host == "localhost" {
+			if host.Hostname == "localhost" || strings.HasPrefix(host.Hostname, "127.") {
 				local := &LocalhostClient{
-					env: env + `export SUP_HOST="` + host + `";`,
+					env: env + `export SUP_HOST="` + host.Hostname + `";`,
 				}
-				if err := local.Connect(host); err != nil {
+				if err := local.Connect(); err != nil {
 					errCh <- errors.Wrap(err, "connecting to localhost failed")
 					return
 				}
@@ -68,20 +128,24 @@ func (sup *Stackup) Run(network *Network, envVars EnvList, commands ...*Command)
 				return
 			}
 
+			if host.User == "" {
+				host.User = network.User
+			}
+
 			// SSH client.
 			remote := &SSHClient{
 				env:   env,
-				user:  network.User,
+				host:  host,
 				color: Colors[i%len(Colors)],
 			}
 
 			if bastion != nil {
-				if err := remote.ConnectWith(host, bastion.DialThrough); err != nil {
+				if err := remote.ConnectWith(bastion.DialThrough); err != nil {
 					errCh <- errors.Wrap(err, "connecting to remote host through bastion failed")
 					return
 				}
 			} else {
-				if err := remote.Connect(host); err != nil {
+				if err := remote.Connect(); err != nil {
 					errCh <- errors.Wrap(err, "connecting to remote host failed")
 					return
 				}
