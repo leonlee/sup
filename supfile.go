@@ -63,7 +63,9 @@ func ParseHostURL(host string) (*Host, error) {
 	h.Name = u.Hostname()
 	h.Hostname = h.Name
 	h.Port = u.Port()
-	h.User = u.User.Username()
+	if u.User != nil {
+		h.User = u.User.Username()
+	}
 
 	return h, nil
 }
