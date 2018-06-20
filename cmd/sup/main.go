@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"os/user"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"text/tabwriter"
@@ -15,7 +13,6 @@ import (
 	"time"
 
 	"github.com/Masterminds/sprig"
-	"github.com/mikkeloscar/sshconfig"
 	"github.com/pkg/errors"
 	"github.com/pressly/sup"
 )
@@ -85,7 +82,7 @@ func networkUsage(conf *sup.Supfile) {
 		fmt.Fprintf(w, "- %v\n", name)
 		network, _ := conf.Networks.Get(name)
 		for _, host := range network.Hosts {
-			fmt.Fprintf(w, "\t- %v\n", host)
+			fmt.Fprintf(w, "\t- %v\n", host.Name)
 		}
 	}
 	fmt.Fprintln(w)
@@ -215,19 +212,6 @@ func parseArgs(conf *sup.Supfile) (*sup.Network, []*sup.Command, error) {
 	return &network, commands, nil
 }
 
-func resolvePath(path string) string {
-	if path == "" {
-		return ""
-	}
-	if path[:2] == "~/" {
-		usr, err := user.Current()
-		if err == nil {
-			path = filepath.Join(usr.HomeDir, path[2:])
-		}
-	}
-	return path
-}
-
 func main() {
 	flag.Parse()
 
@@ -245,7 +229,7 @@ func main() {
 	if supfile == "" {
 		supfile = "./Supfile"
 	}
-	data, err := ioutil.ReadFile(resolvePath(supfile))
+	data, err := ioutil.ReadFile(sup.ResolvePath(supfile))
 	if err != nil {
 		firstErr := err
 		data, err = ioutil.ReadFile("./Supfile.yml") // Alternative to ./Supfile.
@@ -288,9 +272,9 @@ func main() {
 			os.Exit(1)
 		}
 
-		var hosts []string
+		var hosts []*sup.Host
 		for _, host := range network.Hosts {
-			if expr.MatchString(host) {
+			if expr.MatchString(host.Name) {
 				hosts = append(hosts, host)
 			}
 		}
@@ -309,9 +293,9 @@ func main() {
 			os.Exit(1)
 		}
 
-		var hosts []string
+		var hosts []*sup.Host
 		for _, host := range network.Hosts {
-			if !expr.MatchString(host) {
+			if !expr.MatchString(host.Name) {
 				hosts = append(hosts, host)
 			}
 		}
@@ -322,33 +306,34 @@ func main() {
 		network.Hosts = hosts
 	}
 
+	// TODO: refactor
 	// --sshconfig flag location for ssh_config file
-	if sshConfig != "" {
-		confHosts, err := sshconfig.ParseSSHConfig(resolvePath(sshConfig))
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
+	//if sshConfig != "" {
+	//	confHosts, err := sshconfig.ParseSSHConfig(resolvePath(sshConfig))
+	//	if err != nil {
+	//		fmt.Fprintln(os.Stderr, err)
+	//		os.Exit(1)
+	//	}
 
-		// flatten Host -> *SSHHost, not the prettiest
-		// but will do
-		confMap := map[string]*sshconfig.SSHHost{}
-		for _, conf := range confHosts {
-			for _, host := range conf.Host {
-				confMap[host] = conf
-			}
-		}
+	//	// flatten Host -> *SSHHost, not the prettiest
+	//	// but will do
+	//	confMap := map[string]*sshconfig.SSHHost{}
+	//	for _, conf := range confHosts {
+	//		for _, host := range conf.Host {
+	//			confMap[host] = conf
+	//		}
+	//	}
 
-		// check network.Hosts for match
-		for _, host := range network.Hosts {
-			conf, found := confMap[host]
-			if found {
-				network.User = conf.User
-				network.IdentityFile = resolvePath(conf.IdentityFile)
-				network.Hosts = []string{fmt.Sprintf("%s:%d", conf.HostName, conf.Port)}
-			}
-		}
-	}
+	//	// check network.Hosts for match
+	//	for _, host := range network.Hosts {
+	//		conf, found := confMap[host]
+	//		if found {
+	//			network.User = conf.User
+	//			network.IdentityFile = resolvePath(conf.IdentityFile)
+	//			network.Hosts = []string{fmt.Sprintf("%s:%d", conf.HostName, conf.Port)}
+	//		}
+	//	}
+	//}
 
 	var vars sup.EnvList
 	for _, val := range append(conf.Env, network.Env...) {

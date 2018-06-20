@@ -21,7 +21,7 @@ type LocalhostClient struct {
 	env     string //export FOO="bar"; export BAR="baz";
 }
 
-func (c *LocalhostClient) Connect(_ string) error {
+func (c *LocalhostClient) Connect() error {
 	u, err := user.Current()
 	if err != nil {
 		return err
