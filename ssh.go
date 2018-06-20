@@ -95,6 +95,7 @@ func (c *SSHClient) ConnectWith(dialer SSHDialFunc) error {
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(publicKeysSigners...),
 		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
 
 	c.conn, err = dialer("tcp", net.JoinHostPort(c.host.Hostname, c.host.Port), config)
