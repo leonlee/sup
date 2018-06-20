@@ -63,6 +63,7 @@ type Network struct {
 // Host represents host to be connected
 type Host struct {
 	Name         string  `yaml:"name"`
+	Host         string  `yaml:"host"`
 	Hostname     string  `yaml:"hostname"`
 	Port         string  `yaml:"port"`
 	User         string  `yaml:"user"`
@@ -87,6 +88,9 @@ func (h *Host) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	var host map[string]interface{}
 	err = unmarshal(&host)
 	if err == nil {
+		if val, ok := host["host"]; ok {
+			h.Name = fmt.Sprintf("%v", val)
+		}
 		if val, ok := host["name"]; ok {
 			h.Name = fmt.Sprintf("%v", val)
 		}
