@@ -35,6 +35,19 @@ func ParseHostURL(host string) (*Host, error) {
 	if u.User != nil {
 		h.User = u.User.Username()
 	}
+	if len(u.Path) > 1 {
+		h.IdentityFile = u.Path[1:]
+	}
+
+	env := &EnvList{}
+	for k, v := range u.Query() {
+		if len(v) == 0 {
+			env.Set(k, "")
+		} else {
+			env.Set(k, v[len(v)-1])
+		}
+	}
+	h.Env = *env
 
 	return h, nil
 }
