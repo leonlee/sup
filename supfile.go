@@ -14,6 +14,31 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+// ParseHostURL parses and normalizes <user>@<host:port> from a given string, for backward compatibility.
+func ParseHostURL(host string) (*Host, error) {
+	// https://golang.org/pkg/net/url/#URL
+	// [scheme:][//[userinfo@]host][/]path[?query][#fragment]
+	if !strings.Contains(host, "://") && !strings.HasPrefix(host, "//") {
+		host = "ssh://" + host
+	}
+
+	u, err := url.Parse(host)
+	if err != nil {
+		return nil, err
+	}
+
+	h := &Host{}
+
+	h.Name = u.Hostname()
+	h.Hostname = h.Name
+	h.Port = u.Port()
+	if u.User != nil {
+		h.User = u.User.Username()
+	}
+
+	return h, nil
+}
+
 // Supfile represents the Stack Up configuration YAML file.
 type Supfile struct {
 	Networks Networks `yaml:"networks"`
@@ -45,29 +70,48 @@ type Host struct {
 	Env          EnvList `yaml:"env"`
 }
 
-// ParseHostURL parses and normalizes <user>@<host:port> from a given string, for backward compatibility.
-func ParseHostURL(host string) (*Host, error) {
-	// https://golang.org/pkg/net/url/#URL
-	// [scheme:][//[userinfo@]host][/]path[?query][#fragment]
-	if !strings.Contains(host, "://") && !strings.HasPrefix(host, "//") {
-		host = "ssh://" + host
+func (h *Host) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var err error
+
+	var url string
+	err = unmarshal(&url)
+	if err == nil {
+		u, err := ParseHostURL(url)
+		if err != nil {
+			return err
+		}
+		*h = *u
+		return nil
 	}
 
-	u, err := url.Parse(host)
-	if err != nil {
-		return nil, err
+	var host map[string]interface{}
+	err = unmarshal(&host)
+	if err == nil {
+		if val, ok := host["name"]; ok {
+			h.Name = fmt.Sprintf("%v", val)
+		}
+		if val, ok := host["user"]; ok {
+			h.User = fmt.Sprintf("%v", val)
+		}
+		if val, ok := host["hostname"]; ok {
+			h.Hostname = fmt.Sprintf("%v", val)
+		}
+		if val, ok := host["port"]; ok {
+			h.Port = fmt.Sprintf("%v", val)
+		}
+		if val, ok := host["identity_file"]; ok {
+			h.IdentityFile = fmt.Sprintf("%v", val)
+		}
+		if val, ok := host["env"]; ok {
+			env := &EnvList{}
+			for k, v := range val.(map[interface{}]interface{}) {
+				env.Set(fmt.Sprintf("%v", k), fmt.Sprintf("%v", v))
+			}
+			h.Env = *env
+		}
 	}
 
-	h := &Host{}
-
-	h.Name = u.Hostname()
-	h.Hostname = h.Name
-	h.Port = u.Port()
-	if u.User != nil {
-		h.User = u.User.Username()
-	}
-
-	return h, nil
+	return err
 }
 
 // Networks is a list of user-defined networks
