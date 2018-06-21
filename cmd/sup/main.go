@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"flag"
 	"fmt"
@@ -18,11 +19,12 @@ import (
 )
 
 var (
-	supfile     string
-	envVars     flagStringSlice
-	sshConfig   string
-	onlyHosts   string
-	exceptHosts string
+	supfile      string
+	envVars      flagStringSlice
+	sshConfig    string
+	passwordFile string
+	onlyHosts    string
+	exceptHosts  string
 
 	debug         bool
 	disablePrefix bool
@@ -58,6 +60,7 @@ func init() {
 	flag.StringVar(&sshConfig, "sshconfig", "", "Read SSH Config file, ie. ~/.ssh/config file")
 	flag.StringVar(&onlyHosts, "only", "", "Filter hosts using regexp")
 	flag.StringVar(&exceptHosts, "except", "", "Filter out hosts using regexp")
+	flag.StringVar(&passwordFile, "password-file", "", "Read password file for network")
 
 	flag.BoolVar(&debug, "D", false, "Enable debug mode")
 	flag.BoolVar(&debug, "debug", false, "Enable debug mode")
@@ -229,6 +232,7 @@ func main() {
 	if supfile == "" {
 		supfile = "./Supfile"
 	}
+
 	data, err := ioutil.ReadFile(sup.ResolvePath(supfile))
 	if err != nil {
 		firstErr := err
@@ -262,6 +266,35 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+
+	if passwordFile != "" {
+		passwordFile = sup.ResolvePath(passwordFile)
+		if info, err := os.Stat(passwordFile); os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Warning: %s: No such file or directory\n", passwordFile)
+		} else if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", err)
+		} else {
+			m := info.Mode()
+			if m&(1<<2) != 0 {
+				fmt.Fprintf(os.Stderr, "Warning: UNPROTECTED password file! (\"%s\": BAD permissions)\n", passwordFile)
+			} else {
+				file, err := os.Open(passwordFile)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: %s\n", err)
+				} else {
+					scanner := bufio.NewScanner(file)
+					scanner.Split(bufio.ScanLines)
+					for scanner.Scan() {
+						if line := scanner.Text(); line != "" && line[:1] != "#" {
+							network.Password = line
+							break
+						}
+					}
+					file.Close()
+				}
+			}
+		}
 	}
 
 	// --only flag filters hosts
