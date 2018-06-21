@@ -270,7 +270,11 @@ func (e EnvVar) String() string {
 
 // AsExport returns the environment variable as a bash export statement
 func (e EnvVar) AsExport() string {
-	return `export ` + e.Key + `="` + e.Value + `";`
+	v := strings.TrimSpace(e.Value)
+	if strings.HasPrefix(v, `'`) && strings.HasSuffix(v, `'`) {
+		return fmt.Sprintf(`export %s='%s'; `, e.Key, strings.Trim(v, `'`))
+	}
+	return fmt.Sprintf(`export %s="%s"; `, e.Key, strings.Trim(v, `"`))
 }
 
 // EnvList is a list of environment variables that maps to a YAML map,
