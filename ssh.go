@@ -1,29 +1,33 @@
 package sup
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"os/user"
+	"path/filepath"
+	"strings"
 
 	"golang.org/x/crypto/ssh"
 )
 
 // Client is a wrapper over the SSH connection/sessions.
 type SSHClient struct {
-	conn         *ssh.Client
-	sess         *ssh.Session
-	host         *Host
-	remoteStdin  io.WriteCloser
-	remoteStdout io.Reader
-	remoteStderr io.Reader
-	connOpened   bool
-	sessOpened   bool
-	running      bool
-	env          string //export FOO="bar"; export BAR="baz";
-	password     string
-	color        string
+	conn          *ssh.Client
+	sess          *ssh.Session
+	host          *Host
+	remoteStdin   io.WriteCloser
+	remoteStdout  io.Reader
+	remoteStderr  io.Reader
+	connOpened    bool
+	sessOpened    bool
+	running       bool
+	env           string //export FOO="bar"; export BAR="baz";
+	password      string
+	color         string
+	ignoreHostKey bool
 }
 
 type ErrConnect struct {
@@ -76,6 +80,49 @@ func (c *SSHClient) Connect() error {
 	return c.ConnectWith(ssh.Dial)
 }
 
+// hostKeyCallback return ssh.HostKeyCallback function used for verifying server keys.
+func (c *SSHClient) hostKeyCallback() ssh.HostKeyCallback {
+	host := c.host.Name
+	if c.ignoreHostKey {
+		return ssh.InsecureIgnoreHostKey()
+	}
+
+	file, err := os.Open(filepath.Join(os.Getenv("HOME"), ".ssh", "known_hosts"))
+	if err != nil {
+		return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			return err
+		}
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	var hostKey ssh.PublicKey
+	for scanner.Scan() {
+		fields := strings.Split(scanner.Text(), " ")
+		if len(fields) != 3 {
+			continue
+		}
+		if strings.Contains(fields[0], host) {
+			var err error
+			hostKey, _, _, _, err = ssh.ParseAuthorizedKey(scanner.Bytes())
+			if err != nil {
+				return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+					return fmt.Errorf("error parsing %q: %v\n", fields[2], err)
+				}
+			}
+			break
+		}
+	}
+
+	if hostKey == nil {
+		return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			return fmt.Errorf("no hostkey for %s\n", host)
+		}
+	}
+
+	return ssh.FixedHostKey(hostKey)
+}
+
 // ConnectWith creates a SSH connection to a specified host. It will use dialer to establish the
 // connection.
 // TODO: Split Signers to its own method.
@@ -107,7 +154,7 @@ func (c *SSHClient) ConnectWith(dialer SSHDialFunc) error {
 	config := &ssh.ClientConfig{
 		User:            c.host.User,
 		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: c.hostKeyCallback(),
 	}
 
 	c.conn, err = dialer("tcp", net.JoinHostPort(c.host.Hostname, c.host.Port), config)

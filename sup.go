@@ -21,9 +21,10 @@ import (
 const VERSION = "0.5"
 
 type Stackup struct {
-	conf   *Supfile
-	debug  bool
-	prefix bool
+	conf          *Supfile
+	debug         bool
+	prefix        bool
+	ignoreHostKey bool
 }
 
 func New(conf *Supfile) (*Stackup, error) {
@@ -99,8 +100,9 @@ func (sup *Stackup) Run(network *Network, envVars EnvList, commands ...*Command)
 	var bastion *SSHClient
 	if network.Bastion != nil {
 		bastion = &SSHClient{
-			host:     network.Bastion,
-			password: network.Password,
+			host:          network.Bastion,
+			password:      network.Password,
+			ignoreHostKey: sup.ignoreHostKey,
 		}
 		if err := bastion.Connect(); err != nil {
 			return errors.Wrap(err, "connecting to bastion failed")
@@ -135,10 +137,11 @@ func (sup *Stackup) Run(network *Network, envVars EnvList, commands ...*Command)
 
 			// SSH client.
 			remote := &SSHClient{
-				env:      env,
-				host:     host,
-				password: network.Password,
-				color:    Colors[i%len(Colors)],
+				env:           env,
+				host:          host,
+				password:      network.Password,
+				color:         Colors[i%len(Colors)],
+				ignoreHostKey: sup.ignoreHostKey,
 			}
 
 			if bastion != nil {
@@ -312,4 +315,8 @@ func (sup *Stackup) Debug(value bool) {
 
 func (sup *Stackup) Prefix(value bool) {
 	sup.prefix = value
+}
+
+func (sup *Stackup) IgnoreHostKey(value bool) {
+	sup.ignoreHostKey = value
 }

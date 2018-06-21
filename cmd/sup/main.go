@@ -30,6 +30,7 @@ var (
 	disablePrefix bool
 
 	enableTemplate bool
+	ignoreHostKey  bool
 
 	showVersion bool
 	showHelp    bool
@@ -67,6 +68,7 @@ func init() {
 	flag.BoolVar(&disablePrefix, "disable-prefix", false, "Disable hostname prefix")
 
 	flag.BoolVar(&enableTemplate, "enable-template", false, "Parse Supfile as template")
+	flag.BoolVar(&ignoreHostKey, "insecure", false, "Ignore host key checking")
 
 	flag.BoolVar(&showVersion, "v", false, "Print version")
 	flag.BoolVar(&showVersion, "version", false, "Print version")
@@ -410,6 +412,7 @@ func main() {
 	}
 	app.Debug(debug)
 	app.Prefix(!disablePrefix)
+	app.IgnoreHostKey(ignoreHostKey)
 
 	// Run all the commands in the given network.
 	err = app.Run(network, vars, commands...)
