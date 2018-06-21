@@ -34,6 +34,7 @@ var (
 	enableTemplate bool
 	ignoreHostKey  bool
 	askPassword    bool
+	identityFile   string
 
 	showVersion bool
 	showHelp    bool
@@ -65,6 +66,8 @@ func init() {
 	flag.StringVar(&onlyHosts, "only", "", "Filter hosts using regexp")
 	flag.StringVar(&exceptHosts, "except", "", "Filter out hosts using regexp")
 	flag.StringVar(&passwordFile, "password-file", "", "Read password file for network")
+	flag.StringVar(&identityFile, "private-key", "", "Read ssh private key for network")
+	flag.StringVar(&identityFile, "i", "", "Read ssh private key for network")
 
 	flag.BoolVar(&debug, "D", false, "Enable debug mode")
 	flag.BoolVar(&debug, "debug", false, "Enable debug mode")
@@ -276,6 +279,7 @@ func main() {
 
 	if passwordFile != "" {
 		passwordFile = sup.ResolvePath(passwordFile)
+
 		if info, err := os.Stat(passwordFile); os.IsNotExist(err) {
 			fmt.Fprintf(os.Stderr, "Warning: %s: No such file or directory\n", passwordFile)
 		} else if err != nil {
@@ -311,6 +315,10 @@ func main() {
 			fmt.Println()
 			network.Password = string(bytePassword)
 		}
+	}
+
+	if identityFile != "" {
+		network.IdentityFile = identityFile
 	}
 
 	// --only flag filters hosts
