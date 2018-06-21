@@ -34,6 +34,9 @@ func ParseHostURL(host string) (*Host, error) {
 	h.Port = u.Port()
 	if u.User != nil {
 		h.User = u.User.Username()
+		if password, ok := u.User.Password(); ok {
+			h.Password = password
+		}
 	}
 	if len(u.Path) > 1 {
 		h.IdentityFile = u.Path[1:]
@@ -63,6 +66,7 @@ type Supfile struct {
 
 // Network is group of hosts with extra custom env vars.
 type Network struct {
+	Name      string  `yaml:"-"`
 	Env       EnvList `yaml:"env"`
 	Inventory string  `yaml:"inventory"`
 	Hosts     []*Host `yaml:"hosts"`
@@ -71,6 +75,7 @@ type Network struct {
 	// Should these live on Hosts too? We'd have to change []string to struct, even in Supfile.
 	User         string `yaml:"user"`
 	IdentityFile string `yaml:"identity_file"`
+	Password     string `yaml:"password"`
 }
 
 // Host represents host to be connected
@@ -80,6 +85,7 @@ type Host struct {
 	Hostname     string  `yaml:"hostname"`
 	Port         string  `yaml:"port"`
 	User         string  `yaml:"user"`
+	Password     string  `yaml:"password"`
 	IdentityFile string  `yaml:"identity_file"`
 	Env          EnvList `yaml:"env"`
 }
@@ -109,6 +115,9 @@ func (h *Host) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		}
 		if val, ok := host["user"]; ok {
 			h.User = fmt.Sprintf("%v", val)
+		}
+		if val, ok := host["password"]; ok {
+			h.Password = fmt.Sprintf("%v", val)
 		}
 		if val, ok := host["hostname"]; ok {
 			h.Hostname = fmt.Sprintf("%v", val)
@@ -159,6 +168,7 @@ func (n *Networks) UnmarshalYAML(unmarshal func(interface{}) error) error {
 
 func (n *Networks) Get(name string) (Network, bool) {
 	net, ok := n.nets[name]
+	net.Name = name
 	return net, ok
 }
 
@@ -365,6 +375,11 @@ func NewSupfile(data []byte) (*Supfile, error) {
 
 	if err := yaml.Unmarshal(data, &conf); err != nil {
 		return nil, err
+	}
+
+	for _, name := range conf.Networks.Names {
+		network, _ := conf.Networks.Get(name)
+		(&network).Name = name
 	}
 
 	// API backward compatibility. Will be deprecated in v1.0.

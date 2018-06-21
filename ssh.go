@@ -22,6 +22,7 @@ type SSHClient struct {
 	sessOpened   bool
 	running      bool
 	env          string //export FOO="bar"; export BAR="baz";
+	password     string
 	color        string
 }
 
@@ -56,6 +57,11 @@ func (c *SSHClient) Init() error {
 		c.host.User = u.Username
 	}
 
+	// Add default password, if not set
+	if c.host.Password == "" {
+		c.host.Password = c.password
+	}
+
 	c.env = c.env + c.host.Env.AsExport() + `export SUP_HOST="` + c.host.Hostname + `";`
 
 	return nil
@@ -86,15 +92,21 @@ func (c *SSHClient) ConnectWith(dialer SSHDialFunc) error {
 	if c.host.IdentityFile != "" {
 		err := addPublicKeySigner(c.host.IdentityFile)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: %s\n", err)
+			fmt.Fprintf(os.Stderr, "Warning: %s (host: %s, identity_file: %s)\n", err, c.host.Name, c.host.IdentityFile)
 		}
 	}
 
+	authMethods := []ssh.AuthMethod{
+		ssh.PublicKeys(publicKeysSigners...),
+	}
+
+	if c.host.Password != "" {
+		authMethods = append(authMethods, ssh.Password(c.host.Password))
+	}
+
 	config := &ssh.ClientConfig{
-		User: c.host.User,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(publicKeysSigners...),
-		},
+		User:            c.host.User,
+		Auth:            authMethods,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
 

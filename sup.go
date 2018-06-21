@@ -82,7 +82,7 @@ func (sup *Stackup) Run(network *Network, envVars EnvList, commands ...*Command)
 	if network.IdentityFile != "" {
 		err := addPublicKeySigner(network.IdentityFile)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: %s\n", err)
+			fmt.Fprintf(os.Stderr, "Warning: %s (network: %s identity_file: %s)\n", err, network.Name, network.IdentityFile)
 		}
 	} else {
 		// Try to read user's SSH private keys form the standard paths.
@@ -99,7 +99,8 @@ func (sup *Stackup) Run(network *Network, envVars EnvList, commands ...*Command)
 	var bastion *SSHClient
 	if network.Bastion != nil {
 		bastion = &SSHClient{
-			host: network.Bastion,
+			host:     network.Bastion,
+			password: network.Password,
 		}
 		if err := bastion.Connect(); err != nil {
 			return errors.Wrap(err, "connecting to bastion failed")
@@ -134,9 +135,10 @@ func (sup *Stackup) Run(network *Network, envVars EnvList, commands ...*Command)
 
 			// SSH client.
 			remote := &SSHClient{
-				env:   env,
-				host:  host,
-				color: Colors[i%len(Colors)],
+				env:      env,
+				host:     host,
+				password: network.Password,
+				color:    Colors[i%len(Colors)],
 			}
 
 			if bastion != nil {
