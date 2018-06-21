@@ -49,15 +49,22 @@ func ResolvePath(path string) string {
 var publicKeysSigners []ssh.Signer
 
 // addPublicKeySigner add SSH Public Key Signer.
-func addPublicKeySigner(file string) error {
-	data, err := ioutil.ReadFile(ResolvePath(file))
+func addPublicKeySigner(file string, password string) error {
+	key, err := ioutil.ReadFile(ResolvePath(file))
 	if err != nil {
 		return err
 	}
 
-	signer, err := ssh.ParsePrivateKey(data)
+	signer, err := ssh.ParsePrivateKey(key)
 	if err != nil {
-		return err
+		if password != "" {
+			signer, err = ssh.ParsePrivateKeyWithPassphrase(key, []byte(password))
+			if err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
 	}
 	publicKeysSigners = append(publicKeysSigners, signer)
 	return nil
@@ -81,9 +88,9 @@ func (sup *Stackup) Run(network *Network, envVars EnvList, commands ...*Command)
 	}
 
 	if network.IdentityFile != "" {
-		err := addPublicKeySigner(network.IdentityFile)
+		err := addPublicKeySigner(network.IdentityFile, network.Password)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: %s (network: %s identity_file: %s)\n", err, network.Name, network.IdentityFile)
+			fmt.Fprintf(os.Stderr, "Warning: %s Encrypted Key? (network: %s identity_file: %s)\n", err, network.Name, network.IdentityFile)
 		}
 	} else {
 		// Try to read user's SSH private keys form the standard paths.
@@ -92,7 +99,7 @@ func (sup *Stackup) Run(network *Network, envVars EnvList, commands ...*Command)
 			if strings.HasSuffix(f, ".pub") {
 				continue // Skip public keys.
 			}
-			addPublicKeySigner(f)
+			addPublicKeySigner(f, network.Password)
 		}
 	}
 

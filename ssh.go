@@ -82,7 +82,6 @@ func (c *SSHClient) Connect() error {
 
 // hostKeyCallback return ssh.HostKeyCallback function used for verifying server keys.
 func (c *SSHClient) hostKeyCallback() ssh.HostKeyCallback {
-	host := c.host.Name
 	if c.ignoreHostKey {
 		return ssh.InsecureIgnoreHostKey()
 	}
@@ -97,26 +96,32 @@ func (c *SSHClient) hostKeyCallback() ssh.HostKeyCallback {
 
 	scanner := bufio.NewScanner(file)
 	var hostKey ssh.PublicKey
+
+READLINE:
 	for scanner.Scan() {
 		fields := strings.Split(scanner.Text(), " ")
 		if len(fields) != 3 {
 			continue
 		}
-		if strings.Contains(fields[0], host) {
-			var err error
-			hostKey, _, _, _, err = ssh.ParseAuthorizedKey(scanner.Bytes())
-			if err != nil {
-				return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-					return fmt.Errorf("error parsing %q: %v\n", fields[2], err)
+
+		hosts := strings.Split(fields[0], ",")
+		for _, h := range hosts {
+			if h == c.host.Name || h == c.host.Hostname {
+				var err error
+				hostKey, _, _, _, err = ssh.ParseAuthorizedKey(scanner.Bytes())
+				if err != nil {
+					return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+						return fmt.Errorf("error parsing %q: %v\n", fields[2], err)
+					}
 				}
+				break READLINE
 			}
-			break
 		}
 	}
 
 	if hostKey == nil {
 		return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-			return fmt.Errorf("no hostkey for %s\n", host)
+			return fmt.Errorf("no hostkey for %s(%s)\n", c.host.Name, c.host.Hostname)
 		}
 	}
 
@@ -137,7 +142,7 @@ func (c *SSHClient) ConnectWith(dialer SSHDialFunc) error {
 	}
 
 	if c.host.IdentityFile != "" {
-		err := addPublicKeySigner(c.host.IdentityFile)
+		err := addPublicKeySigner(c.host.IdentityFile, c.host.Password)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: %s (host: %s, identity_file: %s)\n", err, c.host.Name, c.host.IdentityFile)
 		}
