@@ -9,6 +9,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"text/template"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/Masterminds/sprig"
 	"github.com/pkg/errors"
 	"github.com/pressly/sup"
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 var (
@@ -31,6 +33,7 @@ var (
 
 	enableTemplate bool
 	ignoreHostKey  bool
+	askPassword    bool
 
 	showVersion bool
 	showHelp    bool
@@ -69,6 +72,7 @@ func init() {
 
 	flag.BoolVar(&enableTemplate, "enable-template", false, "Parse Supfile as template")
 	flag.BoolVar(&ignoreHostKey, "insecure", false, "Ignore host key checking")
+	flag.BoolVar(&askPassword, "ask-pass", false, "Ask for connection password")
 
 	flag.BoolVar(&showVersion, "v", false, "Print version")
 	flag.BoolVar(&showVersion, "version", false, "Print version")
@@ -296,6 +300,16 @@ func main() {
 					file.Close()
 				}
 			}
+		}
+	} else if askPassword {
+		fmt.Print("Password: ")
+		bytePassword, err := terminal.ReadPassword(int(syscall.Stdin))
+		if err != nil {
+			fmt.Println("\nPassword typed: " + string(bytePassword))
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", err)
+		} else {
+			fmt.Println()
+			network.Password = string(bytePassword)
 		}
 	}
 
