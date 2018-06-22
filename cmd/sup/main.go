@@ -36,6 +36,11 @@ var (
 	askPassword    bool
 	identityFile   string
 
+	vaultPasswordFile string
+	askVaultPassword  bool
+	encryptString     bool
+	decryptString     string
+
 	showVersion bool
 	showHelp    bool
 
@@ -65,9 +70,12 @@ func init() {
 	flag.StringVar(&sshConfig, "sshconfig", "", "Read SSH Config file, ie. ~/.ssh/config file")
 	flag.StringVar(&onlyHosts, "only", "", "Filter hosts using regexp")
 	flag.StringVar(&exceptHosts, "except", "", "Filter out hosts using regexp")
-	flag.StringVar(&passwordFile, "password-file", "", "Read password file for network")
+	flag.StringVar(&passwordFile, "password-file", "", "Read SSH password from file (connection or identity_file)")
+	flag.StringVar(&vaultPasswordFile, "vault-password-file", "", "Read vault password from file (encrypt or decrypt)")
 	flag.StringVar(&identityFile, "private-key", "", "Read ssh private key for network")
 	flag.StringVar(&identityFile, "i", "", "Read ssh private key for network")
+	flag.StringVar(&decryptString, "decrypt-string", "", "Decrypt string")
+	flag.BoolVar(&encryptString, "encrypt", false, "Encrypt string from stdin or lines in --password-file")
 
 	flag.BoolVar(&debug, "D", false, "Enable debug mode")
 	flag.BoolVar(&debug, "debug", false, "Enable debug mode")
@@ -75,7 +83,8 @@ func init() {
 
 	flag.BoolVar(&enableTemplate, "enable-template", false, "Parse Supfile as template")
 	flag.BoolVar(&ignoreHostKey, "insecure", false, "Ignore host key checking")
-	flag.BoolVar(&askPassword, "ask-pass", false, "Ask for connection password")
+	flag.BoolVar(&askPassword, "ask-pass", false, "Ask SSH password (connection or identity_file)")
+	flag.BoolVar(&askVaultPassword, "ask-vault-pass", false, "Ask vault password (encrypt or decrypt)")
 
 	flag.BoolVar(&showVersion, "v", false, "Print version")
 	flag.BoolVar(&showVersion, "version", false, "Print version")
@@ -224,6 +233,36 @@ func parseArgs(conf *sup.Supfile) (*sup.Network, []*sup.Command, error) {
 	return &network, commands, nil
 }
 
+func readPasswordFile(filepath string) (string, error) {
+	filepath = sup.ResolvePath(filepath)
+
+	info, err := os.Stat(filepath)
+	if err != nil {
+		return "", err
+	}
+
+	m := info.Mode()
+	if m&(1<<2) != 0 {
+		return "", fmt.Errorf("UNPROTECTED PASSWORD FILE! (%s: BAD permissions)", filepath)
+	}
+
+	file, err := os.Open(filepath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	scanner.Split(bufio.ScanLines)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" && line[:1] != "#" {
+			return line, nil
+		}
+	}
+	return "", fmt.Errorf("no password in file (%s)", filepath)
+}
+
 func main() {
 	flag.Parse()
 
@@ -235,6 +274,73 @@ func main() {
 
 	if showVersion {
 		fmt.Fprintln(os.Stderr, sup.VERSION)
+		return
+	}
+
+	vaultKey := os.Getenv("SUP_VAULT_PASSWORD")
+	if vaultPasswordFile != "" {
+		password, err := readPasswordFile(vaultPasswordFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+			os.Exit(2)
+		}
+		vaultKey = password
+	} else if askVaultPassword || decryptString != "" || encryptString {
+		fmt.Print("Vault Password: ")
+		bytePassword1, err := terminal.ReadPassword(int(syscall.Stdin))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+			os.Exit(2)
+		}
+		fmt.Println()
+
+		fmt.Print("Retype: ")
+		bytePassword, err := terminal.ReadPassword(int(syscall.Stdin))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+			os.Exit(2)
+		}
+		fmt.Println()
+
+		passwordString := string(bytePassword)
+		if passwordString != string(bytePassword1) {
+			fmt.Fprintf(os.Stderr, "Error: vault passwords do not match.")
+			os.Exit(2)
+		}
+
+		vaultKey = string(bytePassword)
+		if vaultKey == "" {
+			fmt.Fprintf(os.Stderr, "Error: got empty password for vault (encrypt or decrypt)\n")
+			os.Exit(2)
+		}
+	}
+
+	if encryptString {
+		fmt.Print("Please enter password string to encrypt: ")
+		bytePassword, err := terminal.ReadPassword(int(syscall.Stdin))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+			os.Exit(2)
+		}
+		fmt.Println()
+
+		passwordString := string(bytePassword)
+		text, err := sup.Encrypt(vaultKey, passwordString)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+			os.Exit(2)
+		}
+		fmt.Println(text)
+		return
+	}
+
+	if decryptString != "" {
+		text, err := sup.Decrypt(vaultKey, decryptString)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+			os.Exit(2)
+		}
+		fmt.Println(text)
 		return
 	}
 
@@ -254,9 +360,32 @@ func main() {
 	}
 
 	// Parse Supfile as go text/template when --enable-template or supfile has suffix ".tpl|.tmpl|.template"
-	if enableTemplate || strings.HasSuffix(supfile, ".tpl") || strings.HasSuffix(supfile, ".tmpl") || strings.HasSuffix(supfile, ".template") {
+	if enableTemplate || strings.HasSuffix(supfile, ".tpl") || strings.HasSuffix(supfile, ".tmpl") || strings.HasSuffix(supfile, ".template") || (strings.Contains(string(data), "{{") && strings.Contains(string(data), "}}")) {
 		var tpl bytes.Buffer
-		t := template.Must(template.New("Supfile").Funcs(sprig.TxtFuncMap()).Parse(string(data)))
+
+		funcDecrypt := func(key string) func(string) (string, error) {
+			return func(text string) (string, error) {
+				if key != "" {
+					return sup.Decrypt(key, text)
+				}
+				return "", fmt.Errorf("please set vault password first!")
+			}
+		}
+		funcEncrypt := func(key string) func(string) (string, error) {
+			return func(text string) (string, error) {
+				if key != "" {
+					return sup.Encrypt(key, text)
+				}
+				return "", fmt.Errorf("please set vault password first!")
+			}
+		}
+
+		funcMap := template.FuncMap{
+			"decrypt": funcDecrypt(vaultKey),
+			"encrypt": funcEncrypt(vaultKey),
+		}
+
+		t := template.Must(template.New("Supfile").Funcs(sprig.TxtFuncMap()).Funcs(funcMap).Parse(string(data)))
 		if err := t.Execute(&tpl, data); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -277,43 +406,30 @@ func main() {
 		os.Exit(1)
 	}
 
-	if passwordFile != "" {
-		passwordFile = sup.ResolvePath(passwordFile)
+	if network.Password == "" {
+		network.Password = os.Getenv("SUP_SSH_PASSWORD")
+	}
 
-		if info, err := os.Stat(passwordFile); os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "Warning: %s: No such file or directory\n", passwordFile)
-		} else if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: %s\n", err)
-		} else {
-			m := info.Mode()
-			if m&(1<<2) != 0 {
-				fmt.Fprintf(os.Stderr, "Warning: UNPROTECTED password file! (\"%s\": BAD permissions)\n", passwordFile)
-			} else {
-				file, err := os.Open(passwordFile)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: %s\n", err)
-				} else {
-					scanner := bufio.NewScanner(file)
-					scanner.Split(bufio.ScanLines)
-					for scanner.Scan() {
-						if line := scanner.Text(); line != "" && line[:1] != "#" {
-							network.Password = line
-							break
-						}
-					}
-					file.Close()
-				}
-			}
+	if passwordFile != "" {
+		password, err := readPasswordFile(passwordFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+			os.Exit(3)
 		}
+		network.Password = password
 	} else if askPassword {
-		fmt.Print("Password: ")
+		fmt.Print("SSH Password: ")
 		bytePassword, err := terminal.ReadPassword(int(syscall.Stdin))
 		if err != nil {
-			fmt.Println("\nPassword typed: " + string(bytePassword))
-			fmt.Fprintf(os.Stderr, "Warning: %s\n", err)
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+			os.Exit(3)
 		} else {
 			fmt.Println()
 			network.Password = string(bytePassword)
+			if network.Password == "" {
+				fmt.Fprintf(os.Stderr, "Error: got empty password for SSH (connection or identity_file)\n")
+				os.Exit(3)
+			}
 		}
 	}
 
