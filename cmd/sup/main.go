@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/Masterminds/sprig"
+	"github.com/kadefor/sup"
 	"github.com/pkg/errors"
-	"github.com/pressly/sup"
 	"golang.org/x/crypto/ssh/terminal"
 )
 

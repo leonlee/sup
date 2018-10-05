@@ -255,6 +255,7 @@ func (t *Targets) Get(name string) ([]string, bool) {
 type Upload struct {
 	Src string `yaml:"src"`
 	Dst string `yaml:"dst"`
+	Dir string `yaml:"dir"`
 	Exc string `yaml:"exclude"`
 }
 

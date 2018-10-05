@@ -31,7 +31,7 @@ func (sup *Stackup) createTasks(cmd *Command, clients []Client, env string) ([]*
 		if err != nil {
 			return nil, errors.Wrap(err, "upload: "+upload.Src)
 		}
-		uploadTarReader, err := NewTarStreamReader(cwd, uploadFile, upload.Exc)
+		uploadTarReader, err := NewTarStreamReader(cwd, uploadFile, upload.Dir, upload.Exc)
 		if err != nil {
 			return nil, errors.Wrap(err, "upload: "+upload.Src)
 		}
