@@ -3,6 +3,10 @@ Stack Up
 
 Stack Up is a simple deployment tool that performs given set of commands on multiple hosts in parallel. It reads Supfile, a YAML configuration file, which defines networks (groups of hosts), commands and targets.
 
+# Fork
+
+This repository is a fork of [kadefor/sup](https://github.com/kadefor/sup), which is a fork of the original [pressly/sup](https://github.com/pressly/sup). Kadefor has updated the ssh client and added ability to provide a user to connect to each host. This repository add `Dir` option in upload command to change default local directory of uploaded files then prevent tar to keep the full path of the file.
+
 # Demo
 
 [![Sup](https://github.com/pressly/sup/blob/gif/asciinema.gif?raw=true)](https://asciinema.org/a/19742?autoplay=1)
